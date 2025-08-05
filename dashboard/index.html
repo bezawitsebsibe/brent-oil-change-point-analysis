@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Brent Oil – Change Point Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 20px; }
+    .row { display: grid; grid-template-columns: 1fr; gap: 24px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    .muted { color: #6b7280; font-size: 0.95rem; }
+    .kpi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .kpi .card { text-align: center; }
+    @media (min-width: 900px) {
+      .row { grid-template-columns: 2fr 1fr; }
+    }
+    ul { margin: 0; padding-left: 18px; }
+  </style>
+</head>
+<body>
+  <h2>Brent Oil – Change Point Dashboard</h2>
+  <p class="muted">Interactive view of price history, detected change point, and nearby events.</p>
+
+  <div class="row">
+    <div class="card">
+      <canvas id="priceChart" height="110"></canvas>
+    </div>
+
+    <div class="card">
+      <h3>Change Point</h3>
+      <div id="cpDetails" class="muted">Loading…</div>
+      <div class="kpi">
+        <div class="card"><div class="muted">P(μ after &gt; μ before)</div><div id="pMu" style="font-size:1.3rem;">–</div></div>
+        <div class="card"><div class="muted">P(Vol after &gt; before)</div><div id="pVol" style="font-size:1.3rem;">–</div></div>
+        <div class="card"><div class="muted">±Window change</div><div id="winChange" style="font-size:1.3rem;">–</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:24px;">
+    <h3>Events near change (±60d)</h3>
+    <div id="eventsList" class="muted">Loading…</div>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+
+    async function getJSON(url) {
+      const r = await fetch(url);
+      return r.json();
+    }
+
+    function formatPct(x) { return (x*100).toFixed(1) + "%"; }
+
+    async function init() {
+      const [price, cp, win, events] = await Promise.all([
+        getJSON("/api/price"),
+        getJSON("/api/changepoint"),
+        getJSON("/api/windowstats"),
+        getJSON("/api/events_near"),
+      ]);
+
+      // Price Chart
+      const labels = price.map(d => d.Date);
+      const data = price.map(d => Number(d.Price));
+      const ctx = document.getElementById("priceChart").getContext("2d");
+
+      const refLinePlugin = {
+        id: 'refLine',
+        afterDatasetsDraw(chart, args, opts) {
+          if (!opts.x) return;
+          const { ctx, scales: { x, y }, chartArea } = chart;
+          const idx = labels.indexOf(opts.x);
+          if (idx < 0) return;
+          const xPos = x.getPixelForValue(idx);
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(xPos, chartArea.top);
+          ctx.lineTo(xPos, chartArea.bottom);
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = 'red';
+          ctx.setLineDash([6, 6]);
+          ctx.stroke();
+          ctx.restore();
+        }
+      };
+
+      Chart.register(refLinePlugin);
+
+      new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: [{ label: 'Price (USD)', data, pointRadius: 0, borderWidth: 1.5 }]},
+        options: {
+          interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { display: true }, refLine: { x: cp?.change_date || null } },
+          scales: {
+            x: { ticks: { display: false } },
+            y: { beginAtZero: false }
+          }
+        }
+      });
+
+      // KPIs
+      if (cp && cp.change_date) {
+        el("cpDetails").textContent = `Change detected on ${cp.change_date}`;
+        if (cp["P(mu_after>mu_before)"] !== undefined) {
+          el("pMu").textContent = formatPct(cp["P(mu_after>mu_before)"]);
+        }
+        if (cp["P(vol_after>vol_before)"] !== undefined) {
+          el("pVol").textContent = formatPct(cp["P(vol_after>vol_before)"]);
+        }
+      } else {
+        el("cpDetails").textContent = "No change point results found. Run Task 2 to generate reports.";
+      }
+
+      if (win && typeof win.pct_change === "number") {
+        el("winChange").textContent = `${win.pct_change.toFixed(1)}%`;
+      }
+
+      // Events list
+      const div = el("eventsList");
+      if (!events || events.length === 0) {
+        div.textContent = "No events found within ±60 days of the change date.";
+      } else {
+        const ul = document.createElement("ul");
+        events.forEach(e => {
+          const li = document.createElement("li");
+          const name = e.event || e.title || "Event";
+          li.textContent = `${e.start_date} — ${name}`;
+          ul.appendChild(li);
+        });
+        div.innerHTML = "";
+        div.appendChild(ul);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
