@@ -1,2 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-/venv
+# Virtual environments
+pymc_env/
+.env/
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+.notebooks/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Installers / temp
+get-pip.py
+*.log
+
+# Cache
+.cache/
